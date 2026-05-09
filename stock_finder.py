@@ -9,59 +9,59 @@ import os
 
 def send_email():
     try:
-        # 1. 데이터 수집 및 점수 계산
+        # 1. 데이터 수집
         df = fdr.StockListing('KRX')
         
-        # 등락률 항목 자동 찾기 및 점수 계산
-        possible_cols = ['ChangesRatio', 'ChgRate', '등락률', 'rate']
-        target_col = next((c for c in possible_cols if c in df.columns), None)
-        
-        if target_col:
-            df[target_col] = pd.to_numeric(df[target_col], errors='coerce').fillna(0)
-            df['종합점수'] = (df[target_col] * 0.5) + (df['Volume'].rank(pct=True) * 10)
-            df['종합점수'] = df['종합점수'].round(2)
-            
-            # 한글 이름으로 변환 (사용자 요청 반영)
-            column_maps = {
-                'Code': '종목코드', 'Name': '종목명', 'Market': '시장',
-                'Close': '현재가', 'Changes': '대비', target_col: '등락률',
-                'Volume': '거래량', 'Amount': '거래대금', 'MarCap': '시가총액'
-            }
-            df = df.rename(columns=column_maps)
-            
-            # 종합점수 열을 맨 앞으로 가져오고 정렬
-            cols = ['종합점수'] + [c for c in df.columns if c != '종합점수']
-            df = df[cols].sort_values(by='종합점수', ascending=False)
+        # 2. 한글로 이름표 미리 바꾸기 (이 작업이 먼저 되어야 합니다)
+        column_maps = {
+            'Code': '종목코드', 'Name': '종목명', 'Market': '시장',
+            'Close': '현재가', 'ChangesRatio': '등락률', 'ChgRate': '등락률',
+            'Volume': '거래량', 'Amount': '거래대금', 'MarCap': '시가총액'
+        }
+        df = df.rename(columns=column_maps)
 
-        # 2. 엑셀 파일 생성 (.xlsx 확장자 고정)
+        # 3. 종합점수 계산 및 정렬 (모바일 가독성을 위해 숫자로 변환)
+        target_col = '등락률'
+        df[target_col] = pd.to_numeric(df[target_col], errors='coerce').fillna(0)
+        df['거래량'] = pd.to_numeric(df['거래량'], errors='coerce').fillna(0)
+        
+        df['종합점수'] = (df[target_col] * 0.5) + (df['거래량'].rank(pct=True) * 10)
+        df['종합점수'] = df['종합점수'].round(2)
+
+        # 필요한 항목만 남기고 순서 정리 (종합점수, 종목명, 현재가 순)
+        final_cols = ['종합점수', '종목명', '현재가', '등락률', '거래량', '시가총액', '시장']
+        df_final = df[final_cols].sort_values(by='종합점수', ascending=False).head(100)
+
+        # 4. 엑셀 파일 생성 (가장 표준적인 형식)
         today = datetime.now().strftime('%Y-%m-%d')
         filename = f"Stock_Report_{today}.xlsx"
-        df.head(100).to_excel(filename, index=False, engine='openpyxl')
+        
+        # 엔진을 xlsxwriter로 사용하여 모바일 호환성을 극대화합니다.
+        with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+            df_final.to_excel(writer, index=False, sheet_name='주식리포트')
 
-        # 3. 메일 설정
+        # 5. 메일 발송 설정
         email_user = "chomiryo8462@gmail.com"
         email_password = os.environ.get('EMAIL_PASSWORD')
 
         msg = MIMEMultipart()
-        msg['Subject'] = f"📊 [모바일최적화] 주식 종합 분석 리포트 ({today})"
+        msg['Subject'] = f"📊 [완료] 한글 주식 리포트 ({today})"
         msg['To'] = email_user
         msg['From'] = email_user
 
-        # 4. 파일 첨부 (모바일 인식을 위해 MIME 타입을 'application/vnd.ms-excel'로 설정)
+        # 6. 파일 첨부 (파일 형식을 엑셀 전용으로 강력하게 지정)
         with open(filename, "rb") as attachment:
-            part = MIMEBase("application", "vnd.ms-excel") # 모바일 호환성 강화
+            part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment.read())
             encoders.encode_base64(part)
-            # 파일명을 한글이 아닌 영문으로 보내면 모바일에서 더 안정적으로 인식합니다.
             part.add_header("Content-Disposition", f"attachment; filename={filename}")
             msg.attach(part)
 
-        # 5. 전송
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(email_user, email_password)
             server.sendmail(email_user, email_user, msg.as_string())
         
-        print(f"✅ 리포트 발송 완료!")
+        print("✅ 한글화 및 모바일 대응 리포트 발송 완료!")
 
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
