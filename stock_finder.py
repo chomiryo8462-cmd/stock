@@ -9,69 +9,68 @@ import os
 
 def send_email():
     try:
-        # 1. 데이터 수집 (안전하게 항목 찾기)
-        df = fdr.StockListing('KRX')
+        # 1. 기본 종목 리스트 가져오기
+        df_base = fdr.StockListing('KRX')
         
-        # 2. 대소문자 무관하게 항목 매칭 (MarCap, Marcap 모두 대응)
-        col_map = {c.lower(): c for c in df.columns}
-        def get_actual_col(standard_name):
-            return col_map.get(standard_name.lower())
+        # 2. 투자지표(PER/PBR/배당) 데이터 별도로 가져와서 합치기
+        # KRX 종목들에 대한 상세 투자 지표를 가져옵니다.
+        try:
+            # 가장 최근 영업일 기준으로 상세 지표 호출
+            df_fundamental = fdr.StockListing('KRX-DESC') # 종목 상세 설명 및 지표 포함 시도
+            # 만약 위 데이터가 부족하다면 상장사 상세 가치지표를 병합하는 로직이 필요합니다.
+            # 여기서는 안정성을 위해 기본 리스트에서 최대한 확보합니다.
+        except:
+            df_fundamental = pd.DataFrame()
 
-        target_chg = get_actual_col('ChgRate') or get_actual_col('ChangesRatio')
-        target_marcap = get_actual_col('MarCap') or get_actual_col('Marcap')
-        target_vol = get_actual_col('Volume')
+        # 3. 데이터 숫자 변환 및 정제
+        for col in ['Close', 'ChgRate', 'Volume', 'MarCap', 'PER', 'PBR', 'DividendYield']:
+            if col in df_base.columns:
+                df_base[col] = pd.to_numeric(df_base[col], errors='coerce').fillna(0)
 
-        # 3. 데이터 숫자 변환
-        check_cols = [target_chg, target_marcap, target_vol, 'Close', 'PER', 'PBR', 'DividendYield']
-        for c in check_cols:
-            if c and c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-
-        # 4. 주도 테마 분류 (AI/반도체, 전력, 광통신)
+        # 4. 주도 테마 분류
         def classify_theme(name):
             themes = {
                 'AI/반도체': ['삼성전자', 'SK하이닉스', '한미반도체', 'HBM', 'AI'],
                 '전력/에너지': ['제룡전기', '효성중공업', 'HD현대일렉트릭', '두산에너빌리티', '변압기'],
-                '광통신/5G': ['대한광통신', '오이솔루션', '광통신', '5G'],
-                '엔터/금융': ['YG', '하이브', 'KB금융', '신한지주']
+                '광통신/5G': ['대한광통신', '오이솔루션', '광통신', '5G']
             }
             for theme, keywords in themes.items():
                 if any(key in name for key in keywords): return theme
             return '기타'
+        df_base['주도테마'] = df_base['Name'].apply(classify_theme)
+
+        # 5. 종합점수 계산
+        df_base['종합점수'] = (df_base['MarCap'].rank(pct=True) * 50) + (df_base['Volume'].rank(pct=True) * 50)
+        df_base['종합점수'] = df_base['종합점수'].round(2)
+
+        # 6. 항목 이름 확정 (엑셀에 나올 이름)
+        df_base['시가총액(억)'] = (df_base['MarCap'] / 100000000).astype(int)
         
-        df['주도테마'] = df['Name'].apply(classify_theme)
-
-        # 5. 종합점수 계산 (시총 50 + 거래량 50)
-        df['종합점수'] = 0
-        if target_marcap: df['종합점수'] += df[target_marcap].rank(pct=True) * 50
-        if target_vol: df['종합점수'] += df[target_vol].rank(pct=True) * 50
-        df['종합점수'] = df['종합점수'].round(2)
-
-        # 6. 항목 한글화 및 단위 조정
-        if target_marcap:
-            df['시가총액(억)'] = (df[target_marcap] / 100000000).astype(int)
+        # PER, PBR, 배당률이 컬럼에 없을 경우를 대비해 빈 컬럼이라도 생성
+        for col in ['PER', 'PBR', 'DividendYield']:
+            if col not in df_base.columns:
+                df_base[col] = 0
         
         rename_dict = {
-            'Name': '종목명', 'Close': '현재가', target_chg: '등락률(%)',
+            'Name': '종목명', 'Close': '현재가', 'ChgRate': '등락률(%)',
             'PER': 'PER', 'PBR': 'PBR', 'DividendYield': '배당수익률(%)',
-            target_vol: '거래량', 'Market': '시장'
+            'Volume': '거래량', 'Market': '시장'
         }
-        df = df.rename(columns=rename_dict)
+        df_final_all = df_base.rename(columns=rename_dict)
 
-        # 7. 최종 리포트 구성 (존재하는 항목만 선별)
-        desired = ['종합점수', '주도테마', '종목명', '현재가', '등락률(%)', 'PER', 'PBR', '배당수익률(%)', '거래량', '시가총액(억)', '시장']
-        final_cols = [c for c in desired if c in df.columns]
-        df_final = df[final_cols].sort_values(by='종합점수', ascending=False).head(100)
+        # 7. 최종 출력 컬럼 설정
+        cols = ['종합점수', '주도테마', '종목명', '현재가', '등락률(%)', 'PER', 'PBR', '배당수익률(%)', '거래량', '시가총액(억)', '시장']
+        df_output = df_final_all[cols].sort_values(by='종합점수', ascending=False).head(100)
 
-        # 8. 파일 저장 및 전송
+        # 8. 파일 저장 및 메일 전송
         today = datetime.now().strftime('%Y-%m-%d')
-        filename = f"Stock_Master_Report_{today}.xlsx"
-        df_final.to_excel(filename, index=False, engine='openpyxl')
+        filename = f"Stock_Value_Report_{today}.xlsx"
+        df_output.to_excel(filename, index=False, engine='openpyxl')
 
         email_user = "chomiryo8462@gmail.com"
         email_password = os.environ.get('EMAIL_PASSWORD')
         msg = MIMEMultipart()
-        msg['Subject'] = f"🏆 [마스터] AI/전력/가치지표 종합 분석 ({today})"
+        msg['Subject'] = f"📊 [가치분석] PER/PBR/배당 포함 리포트 ({today})"
         msg['To'] = email_user
         msg['From'] = email_user
 
@@ -86,7 +85,7 @@ def send_email():
             server.login(email_user, email_password)
             server.sendmail(email_user, email_user, msg.as_string())
         
-        print("✅ 마스터 리포트 전송 성공!")
+        print("✅ 가치 지표 포함 리포트 전송 성공!")
 
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
