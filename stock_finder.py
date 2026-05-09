@@ -48,8 +48,8 @@ try:
 
     msg = MIMEMultipart()
     msg['Subject'] = f"🚀 종합 점수 포함! 주식 리포트 ({today})"
-    msg['To'] = email_user
-    msg['From'] = email_user
+    msg['To'] = "chomiryo8462@gmail.com"
+    msg['From'] = "chomiryo8462@gmail.com"
 
     with open(filename, "rb") as attachment:
         part = MIMEBase("application", "octet-stream")
