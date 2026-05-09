@@ -12,44 +12,50 @@ def send_email():
         # 1. 데이터 수집
         df = fdr.StockListing('KRX')
         
-        # 2. 한글로 이름표 미리 바꾸기 (이 작업이 먼저 되어야 합니다)
-        column_maps = {
-            'Code': '종목코드', 'Name': '종목명', 'Market': '시장',
-            'Close': '현재가', 'ChangesRatio': '등락률', 'ChgRate': '등락률',
-            'Volume': '거래량', 'Amount': '거래대금', 'MarCap': '시가총액'
-        }
-        df = df.rename(columns=column_maps)
+        # 2. 등락률 항목 자동 찾기 (이름이 영어든 한글이든 대응 가능)
+        # 등락률은 보통 소수점(%) 데이터가 들어있는 열입니다.
+        possible_cols = ['ChangesRatio', 'ChgRate', '등락률', 'rate']
+        target_col = next((c for c in possible_cols if c in df.columns), None)
 
-        # 3. 종합점수 계산 및 정렬 (모바일 가독성을 위해 숫자로 변환)
-        target_col = '등락률'
-        df[target_col] = pd.to_numeric(df[target_col], errors='coerce').fillna(0)
-        df['거래량'] = pd.to_numeric(df['거래량'], errors='coerce').fillna(0)
+        if target_col:
+            # 숫자로 변환 (모바일에서 깨짐 방지)
+            df[target_col] = pd.to_numeric(df[target_col], errors='coerce').fillna(0)
+            df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0)
+            
+            # 종합점수 계산
+            df['종합점수'] = (df[target_col] * 0.5) + (df['Volume'].rank(pct=True) * 10)
+            df['종합점수'] = df['종합점수'].round(2)
+            
+            # 한글 이름표 붙이기 (오류 방지를 위해 안전하게 처리)
+            column_maps = {
+                'Code': '종목코드', 'Name': '종목명', 'Market': '시장',
+                'Close': '현재가', 'Changes': '대비', target_col: '등락률',
+                'Volume': '거래량', 'Amount': '거래대금', 'MarCap': '시가총액'
+            }
+            df = df.rename(columns=column_maps)
+
+        # 3. 필요한 항목만 추출 및 정렬 (종합점수 우선)
+        # 실제 존재하는 컬럼만 선택하도록 안전하게 필터링
+        display_cols = ['종합점수', '종목명', '현재가', '등락률', '거래량', '시가총액']
+        final_cols = [c for c in display_cols if c in df.columns]
         
-        df['종합점수'] = (df[target_col] * 0.5) + (df['거래량'].rank(pct=True) * 10)
-        df['종합점수'] = df['종합점수'].round(2)
-
-        # 필요한 항목만 남기고 순서 정리 (종합점수, 종목명, 현재가 순)
-        final_cols = ['종합점수', '종목명', '현재가', '등락률', '거래량', '시가총액', '시장']
         df_final = df[final_cols].sort_values(by='종합점수', ascending=False).head(100)
 
-        # 4. 엑셀 파일 생성 (가장 표준적인 형식)
+        # 4. 엑셀 파일 생성 (.xlsx)
         today = datetime.now().strftime('%Y-%m-%d')
-        filename = f"Stock_Report_{today}.xlsx"
-        
-        # 엔진을 xlsxwriter로 사용하여 모바일 호환성을 극대화합니다.
-        with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
-            df_final.to_excel(writer, index=False, sheet_name='주식리포트')
+        filename = f"Stock_Analysis_{today}.xlsx"
+        df_final.to_excel(filename, index=False, engine='xlsxwriter')
 
         # 5. 메일 발송 설정
         email_user = "chomiryo8462@gmail.com"
         email_password = os.environ.get('EMAIL_PASSWORD')
 
         msg = MIMEMultipart()
-        msg['Subject'] = f"📊 [완료] 한글 주식 리포트 ({today})"
+        msg['Subject'] = f"📊 [최종] 오늘의 주식 종합 분석 리포트 ({today})"
         msg['To'] = email_user
         msg['From'] = email_user
 
-        # 6. 파일 첨부 (파일 형식을 엑셀 전용으로 강력하게 지정)
+        # 6. 파일 첨부 (모바일 최적화 형식)
         with open(filename, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment.read())
@@ -57,11 +63,12 @@ def send_email():
             part.add_header("Content-Disposition", f"attachment; filename={filename}")
             msg.attach(part)
 
+        # 7. 전송
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(email_user, email_password)
             server.sendmail(email_user, email_user, msg.as_string())
         
-        print("✅ 한글화 및 모바일 대응 리포트 발송 완료!")
+        print("✅ 드디어 모든 오류 해결! 메일함을 확인하세요.")
 
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
