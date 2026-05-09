@@ -8,27 +8,49 @@ from email import encoders
 import os
 
 try:
-    # 1. 주식 데이터 가져오기 (가장 안정적인 방식)
+    # 1. 데이터 가져오기
     df = fdr.StockListing('KRX')
-    
-    # 2. 파일 이름 정하기 (오늘 날짜)
-    today = datetime.now().strftime('%Y%m%d')
-    filename = f"Stock_Report_{today}.xlsx"
-    
-    # 3. 엑셀 파일 만들기 (엔진을 openpyxl로 고정)
-    df.head(100).to_excel(filename, index=False, engine='openpyxl')
-    print(f"{filename} 파일 생성 완료!")
 
-    # 4. 이메일 보내기 설정
+    # 2. 종합 점수 및 한글 변환 (이전 분석 로직 복구)
+    # 점수 계산을 위해 필요한 수치들 정리 (예시: 거래량과 변동성 기준)
+    df['종합점수'] = (df['ChangesRatio'] * 0.5) + (df['Volume'].rank(pct=True) * 10)
+    df['종합점수'] = df['종합점수'].round(2)
+
+    # 영어 이름을 한글로 바꾸기
+    column_maps = {
+        'Code': '종목코드',
+        'Name': '종목명',
+        'Market': '시장',
+        'Close': '현재가',
+        'Changes': '대비',
+        'ChangesRatio': '등락률',
+        'Open': '시가',
+        'High': '고가',
+        'Low': '저가',
+        'Volume': '거래량',
+        'Amount': '거래대금',
+        'MarCap': '시가총액',
+        'Stocks': '상장주식수'
+    }
+    df = df.rename(columns=column_maps)
+
+    # 점수 높은 순으로 정렬 후 상위 100개만 남기기
+    df = df.sort_values(by='종합점수', ascending=False)
+    
+    # 3. 파일 만들기
+    today = datetime.now().strftime('%Y%m%d')
+    filename = f"주식_종합분석_{today}.xlsx"
+    df.head(100).to_excel(filename, index=False, engine='openpyxl')
+
+    # 4. 이메일 보내기
     email_user = os.environ.get('EMAIL_USER')
     email_password = os.environ.get('EMAIL_PASSWORD')
 
     msg = MIMEMultipart()
-    msg['Subject'] = f"🏆 오늘의 주식 분석 리포트 ({today})"
+    msg['Subject'] = f"🚀 종합 점수 포함! 주식 리포트 ({today})"
     msg['To'] = email_user
     msg['From'] = email_user
 
-    # 파일 첨부
     with open(filename, "rb") as attachment:
         part = MIMEBase("application", "octet-stream")
         part.set_payload(attachment.read())
@@ -36,13 +58,12 @@ try:
         part.add_header("Content-Disposition", f"attachment; filename={filename}")
         msg.attach(part)
 
-    # 메일 전송
     with smtplib.SMTP('smtp.gmail.com', 587) as server:
         server.starttls()
         server.login(email_user, email_password)
         server.sendmail(email_user, email_user, msg.as_string())
     
-    print("메일 발송 성공!")
+    print("한글 리포트 발송 완료!")
 
 except Exception as e:
     print(f"오류 발생: {e}")
