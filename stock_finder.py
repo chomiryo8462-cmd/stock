@@ -7,28 +7,42 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os
 
-# 1. 주식 데이터 수집 및 분석
-df_krx = fdr.StockListing('KRX')
-# ... (분석 로직) ...
-filename = f"주식리포트_{datetime.now().strftime('%Y%m%d')}.xlsx"
-df_krx.head(50).to_excel(filename, index=False)
+try:
+    # 1. 주식 데이터 가져오기 (가장 안정적인 방식)
+    df = fdr.StockListing('KRX')
+    
+    # 2. 파일 이름 정하기 (오늘 날짜)
+    today = datetime.now().strftime('%Y%m%d')
+    filename = f"Stock_Report_{today}.xlsx"
+    
+    # 3. 엑셀 파일 만들기 (엔진을 openpyxl로 고정)
+    df.head(100).to_excel(filename, index=False, engine='openpyxl')
+    print(f"{filename} 파일 생성 완료!")
 
-# 2. 메일 발송
-msg = MIMEMultipart()
-msg['Subject'] = f"오늘의 주식 리포트 도착 ({datetime.now().strftime('%Y-%m-%d')})"
-msg['To'] = os.environ.get('EMAIL_USER')
-msg['From'] = os.environ.get('EMAIL_USER')
+    # 4. 이메일 보내기 설정
+    email_user = os.environ.get('EMAIL_USER')
+    email_password = os.environ.get('EMAIL_PASSWORD')
 
-with open(filename, "rb") as f:
-    part = MIMEBase("application", "octet-stream")
-    part.set_payload(f.read())
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f"attachment; filename={filename}")
-    msg.attach(part)
+    msg = MIMEMultipart()
+    msg['Subject'] = f"🏆 오늘의 주식 분석 리포트 ({today})"
+    msg['To'] = email_user
+    msg['From'] = email_user
 
-s = smtplib.SMTP('smtp.gmail.com', 587)
-s.starttls()
-s.login(os.environ.get('EMAIL_USER'), os.environ.get('EMAIL_PASSWORD'))
-s.sendmail(msg['From'], msg['To'], msg.as_string())
-s.quit()
-print("메일 전송 성공!")
+    # 파일 첨부
+    with open(filename, "rb") as attachment:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={filename}")
+        msg.attach(part)
+
+    # 메일 전송
+    with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        server.starttls()
+        server.login(email_user, email_password)
+        server.sendmail(email_user, email_user, msg.as_string())
+    
+    print("메일 발송 성공!")
+
+except Exception as e:
+    print(f"오류 발생: {e}")
