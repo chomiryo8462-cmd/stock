@@ -1,5 +1,4 @@
 finance-datareader
-pykrx
 pandas
 openpyxl
 beautifulsoup4
