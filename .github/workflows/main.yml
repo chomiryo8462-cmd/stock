@@ -1,21 +1,21 @@
-name: Daily Stock Check
+name: AutoStock
 on:
   schedule:
-    - cron: '0 7 * * 1-5' # 월~금 한국시간 오후 4시
-  workflow_dispatch: # 수동 실행 버튼
+    # 한국 시간 기준 평일(월-금) 오전 8시 30분에 자동으로 메일을 보냅니다.
+    - cron: '30 23 * * 1-5'
+  workflow_dispatch: # 직접 'Run workflow' 버튼을 눌러서 보낼 수도 있게 합니다.
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install finance-datareader pandas openpyxl
-      - name: Run script
+      - name: Run Script
         env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python stock_finder.py
+        run: python stock_report.py
