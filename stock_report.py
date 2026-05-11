@@ -1,23 +1,26 @@
 import pandas as pd
+import FinanceDataReader as fdr
 from datetime import datetime, timedelta
+import requests
+from bs4 import BeautifulSoup
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import os
-from pykrx import stock
 import traceback
 
-# =========================
+# =========================================
 # 테마 정의
-# =========================
+# =========================================
+
 THEMES = {
+
     'AI/반도체': [
         '삼성전자',
         'SK하이닉스',
         '한미반도체',
-        '리노공업',
-        '이오테크닉스'
+        '리노공업'
     ],
 
     '전력/에너지': [
@@ -28,7 +31,6 @@ THEMES = {
     ],
 
     '바이오': [
-        '삼천당제약',
         '알테오젠',
         '리가켐바이오',
         '디앤디파마텍'
@@ -36,37 +38,10 @@ THEMES = {
 }
 
 
-# =========================
-# 최근 영업일 찾기
-# =========================
-def get_last_open_date():
-
-    curr = datetime.now()
-
-    for _ in range(10):
-
-        d_str = curr.strftime('%Y%m%d')
-
-        try:
-            df = stock.get_market_ohlcv_by_ticker(
-                d_str,
-                market="KOSPI"
-            )
-
-            if not df.empty:
-                return d_str
-
-        except:
-            pass
-
-        curr -= timedelta(days=1)
-
-    return datetime.now().strftime('%Y%m%d')
-
-
-# =========================
+# =========================================
 # 테마 분류
-# =========================
+# =========================================
+
 def classify_theme(name):
 
     for theme, keywords in THEMES.items():
@@ -77,153 +52,233 @@ def classify_theme(name):
     return '기타'
 
 
-# =========================
+# =========================================
+# 최근 영업일
+# =========================================
+
+def get_last_business_day():
+
+    today = datetime.now()
+
+    while today.weekday() >= 5:
+        today -= timedelta(days=1)
+
+    return today.strftime("%Y-%m-%d")
+
+
+# =========================================
+# 한국 주식 리스트
+# =========================================
+
+def get_stock_list():
+
+    kospi = fdr.StockListing('KOSPI')
+    kosdaq = fdr.StockListing('KOSDAQ')
+
+    stocks = pd.concat([kospi, kosdaq])
+
+    return stocks[['Code', 'Name']]
+
+
+# =========================================
+# 시총 크롤링
+# =========================================
+
+def get_market_cap(code):
+
+    try:
+
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        r = requests.get(
+            url,
+            headers=headers,
+            timeout=10
+        )
+
+        soup = BeautifulSoup(r.text, 'lxml')
+
+        em = soup.select_one(
+            "#_market_sum"
+        )
+
+        if em is None:
+            return 0
+
+        text = em.text.strip()
+
+        text = text.replace(",", "")
+
+        return float(text)
+
+    except:
+        return 0
+
+
+# =========================================
+# 개별 종목 데이터
+# =========================================
+
+def get_stock_data(code, name):
+
+    try:
+
+        end = datetime.now()
+
+        start = end - timedelta(days=30)
+
+        df = fdr.DataReader(
+            code,
+            start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d")
+        )
+
+        if df.empty:
+            return None
+
+        latest = df.iloc[-1]
+
+        prev = df.iloc[-2]
+
+        close = latest['Close']
+
+        volume = latest['Volume']
+
+        change = (
+            (close - prev['Close'])
+            / prev['Close']
+        ) * 100
+
+        value = close * volume
+
+        market_cap = get_market_cap(code)
+
+        return {
+
+            '종목명': name,
+
+            '현재가': round(close, 2),
+
+            '등락률': round(change, 2),
+
+            '거래량': int(volume),
+
+            '거래대금': int(value),
+
+            '시가총액(억)': market_cap,
+
+            '주도테마': classify_theme(name)
+        }
+
+    except Exception as e:
+
+        print(f"에러: {name} {e}")
+
+        return None
+
+
+# =========================================
 # 데이터 수집
-# =========================
-def collect_stock_data(target_date):
+# =========================================
 
-    print(f"📅 데이터 기준일: {target_date}")
+def collect_all_data():
 
-    # 시세
-    df_price = stock.get_market_ohlcv_by_ticker(
-        target_date,
-        market="ALL"
-    )
+    stocks = get_stock_list()
 
-    # 펀더멘털
-    df_fund = stock.get_market_fundamental_by_ticker(
-        target_date,
-        market="ALL"
-    )
+    results = []
 
-    # 병합
-    df = pd.concat([df_price, df_fund], axis=1)
+    total = len(stocks)
 
-    # 종목명 추가
-    df['종목명'] = [
-        stock.get_market_ticker_name(t)
-        for t in df.index
-    ]
+    for idx, row in stocks.iterrows():
 
-    # 필요한 컬럼만 안정적으로 추출
-    result = pd.DataFrame(index=df.index)
+        code = row['Code']
+        name = row['Name']
 
-    result['종목명'] = df['종목명']
+        print(f"[{idx+1}/{total}] {name}")
 
-    result['현재가'] = df.get('종가', 0)
-    result['등락률'] = df.get('등락률', 0)
-    result['거래량'] = df.get('거래량', 0)
-    result['시가총액'] = df.get('시가총액', 0)
+        data = get_stock_data(code, name)
 
-    # 기본지표
-    result['PER'] = df.get('PER', 0)
-    result['PBR'] = df.get('PBR', 0)
-    result['DIV'] = df.get('DIV', 0)
+        if data:
+            results.append(data)
 
-    # NaN 방어
-    result = result.fillna(0)
+    df = pd.DataFrame(results)
 
-    # 거래대금
-    result['거래대금'] = (
-        result['현재가'] * result['거래량']
-    )
+    if df.empty:
+        raise ValueError("수집 데이터 없음")
 
-    # 테마
-    result['주도테마'] = result['종목명'].apply(
-        classify_theme
-    )
+    # 점수 계산
+    df['종합점수'] = (
 
-    # 시총 억단위
-    result['시가총액(억)'] = (
-        result['시가총액'] / 1e8
-    ).round(1)
+        df['등락률'].rank(pct=True) * 40 +
 
-    # =========================
-    # 종합점수 계산
-    # =========================
+        df['거래대금'].rank(pct=True) * 40 +
 
-    result['종합점수'] = (
-
-        result['등락률'].rank(pct=True) * 35 +
-
-        result['거래대금'].rank(pct=True) * 35 +
-
-        result['시가총액'].rank(pct=True) * 20 +
-
-        result['PER'].rank(
-            pct=True,
-            ascending=False
-        ) * 10
+        df['시가총액(억)'].rank(pct=True) * 20
 
     ).round(2)
 
-    # 정렬
-    final = result[
-        [
-            '종합점수',
-            '주도테마',
-            '종목명',
-            '현재가',
-            '등락률',
-            '거래량',
-            '거래대금',
-            'PER',
-            'PBR',
-            '시가총액(억)'
-        ]
-    ]
-
-    final = final.sort_values(
+    df = df.sort_values(
         by='종합점수',
         ascending=False
     )
 
-    return final.head(100)
+    return df.head(100)
 
 
-# =========================
+# =========================================
 # 엑셀 저장
-# =========================
-def save_excel(df, target_date):
+# =========================================
 
-    now = datetime.now().strftime('%H%M%S')
+def save_excel(df):
 
-    filename = (
-        f"Stock_Report_{target_date}_{now}.xlsx"
+    now = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
     )
+
+    filename = f"Stock_Report_{now}.xlsx"
 
     df.to_excel(
         filename,
         index=False
     )
 
-    print(f"💾 엑셀 저장 완료: {filename}")
+    print(f"엑셀 저장 완료: {filename}")
 
     return filename
 
 
-# =========================
+# =========================================
 # 이메일 발송
-# =========================
-def send_email(filename, target_date):
+# =========================================
 
-    email_user = os.environ.get('EMAIL_USER')
-    email_pw = os.environ.get('EMAIL_PASSWORD')
+def send_email(filename):
+
+    email_user = os.environ.get(
+        'EMAIL_USER'
+    )
+
+    email_pw = os.environ.get(
+        'EMAIL_PASSWORD'
+    )
 
     if not email_user:
         raise ValueError(
-            "EMAIL_USER 환경변수 없음"
+            "EMAIL_USER 없음"
         )
 
     if not email_pw:
         raise ValueError(
-            "EMAIL_PASSWORD 환경변수 없음"
+            "EMAIL_PASSWORD 없음"
         )
 
     msg = MIMEMultipart()
 
     msg['Subject'] = (
-        f"📊 주식 리포트 ({target_date})"
+        "📊 자동 주식 리포트"
     )
 
     msg['To'] = email_user
@@ -247,8 +302,6 @@ def send_email(filename, target_date):
 
         msg.attach(part)
 
-    print("📧 이메일 전송 시작...")
-
     with smtplib.SMTP_SSL(
         'smtp.gmail.com',
         465
@@ -265,43 +318,39 @@ def send_email(filename, target_date):
             msg.as_string()
         )
 
-    print("🚀 이메일 전송 완료")
+    print("이메일 전송 완료")
 
 
-# =========================
-# 메인 실행
-# =========================
+# =========================================
+# 메인
+# =========================================
+
 def main():
 
     try:
 
-        target_date = get_last_open_date()
+        print("데이터 수집 시작")
 
-        df = collect_stock_data(target_date)
+        df = collect_all_data()
 
-        filename = save_excel(
-            df,
-            target_date
-        )
+        print(df.head())
 
-        send_email(
-            filename,
-            target_date
-        )
+        filename = save_excel(df)
 
-        print("✅ 전체 작업 완료")
+        send_email(filename)
+
+        print("전체 완료")
 
     except Exception as e:
 
-        print("❌ 에러 발생")
+        print("최종 에러")
 
         print(str(e))
 
         traceback.print_exc()
 
 
-# =========================
-# 시작
-# =========================
+# =========================================
+
 if __name__ == "__main__":
     main()
