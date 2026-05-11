@@ -1,19 +1,36 @@
-name: AutoStock
+name: Stock Report
+
 on:
-  workflow_dispatch: # 수동 실행
   schedule:
-    - cron: '30 23 * * 1-5' # 평일 오전 8:30
+    - cron: '0 9 * * 1-5'
+
+  workflow_dispatch:
+
 jobs:
-  run:
+  run-stock-report:
+
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-      - name: Install
-        run: pip install pandas openpyxl pykrx
-      - name: Run
+          python-version: '3.11'
+
+      - name: 라이브러리 설치
+        run: |
+          pip install pandas
+          pip install pykrx
+          pip install openpyxl
+
+      - name: 실행
         env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python stock_report.py
+
+        run: |
+          python stock_report.py
