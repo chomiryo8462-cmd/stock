@@ -1,19 +1,19 @@
-name: AutoStockReport
+name: AutoStock
 on:
   schedule:
     - cron: '30 23 * * 1-5'
   workflow_dispatch:
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - name: Install
+      - name: Libs
         run: pip install pandas openpyxl pykrx
-      - name: Run
+      - name: Exec
         env:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: python stock_report.py
