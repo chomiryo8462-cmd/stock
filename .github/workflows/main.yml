@@ -1,21 +1,33 @@
-name: AutoStock
+name: AutoStockReport
+
 on:
   schedule:
-    # 한국 시간 기준 평일(월-금) 오전 8시 30분에 자동으로 메일을 보냅니다.
+    # 매일 평일(월-금) 한국 시간 오전 8시 30분 자동 실행 (UTC 23:30)
     - cron: '30 23 * * 1-5'
-  workflow_dispatch: # 직접 'Run workflow' 버튼을 눌러서 보낼 수도 있게 합니다.
+  workflow_dispatch: # 수동으로 'Run workflow' 버튼을 눌러 실행 가능
 
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout repository content
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-     - name: Install dependencies
-        run: pip install pandas openpyxl pykrx  
-      - name: Run Script
+
+      - name: Install dependencies
+        run: |
+          # 데이터 수집에 필요한 라이브러리들을 설치합니다.
+          pip install pandas openpyxl pykrx finance-datareader
+
+      - name: Execute Python script
         env:
+          # GitHub Secrets에 저장한 구글 앱 비밀번호를 불러옵니다.
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python stock_report.py
+        run: |
+          # 실행할 파이썬 파일명이 stock_report.py 인지 꼭 확인하세요!
+          python stock_report.py
