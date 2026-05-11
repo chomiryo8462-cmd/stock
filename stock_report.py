@@ -10,6 +10,7 @@ from email import encoders
 import traceback
 import os
 import time
+import re
 
 # =========================================================
 # 설정
@@ -75,87 +76,56 @@ def get_fundamental(code):
             timeout=10
         )
 
-        tables = pd.read_html(r.text)
+        text = r.text
 
         per = 0
         pbr = 0
         div = 0
 
-        for table in tables:
+        # =================================================
+        # PER
+        # =================================================
 
-            text = table.to_string()
+        per_match = re.search(
+            r"PER[^0-9]*([0-9]+\.[0-9]+)",
+            text
+        )
 
-            # PER
-            if 'PER' in text:
+        if per_match:
 
-                values = table.values.flatten()
+            per = float(
+                per_match.group(1)
+            )
 
-                for v in values:
+        # =================================================
+        # PBR
+        # =================================================
 
-                    s = str(v)
+        pbr_match = re.search(
+            r"PBR[^0-9]*([0-9]+\.[0-9]+)",
+            text
+        )
 
-                    if 'PER' in s:
-                        continue
+        if pbr_match:
 
-                    try:
+            pbr = float(
+                pbr_match.group(1)
+            )
 
-                        num = float(
-                            s.replace(',', '')
-                        )
+        # =================================================
+        # 배당수익률
+        # =================================================
 
-                        if 0 < num < 200:
-                            per = num
-                            break
+        div_match = re.search(
+            r"배당수익률[^0-9]*([0-9]+\.[0-9]+)",
+            text
+        )
 
-                    except:
-                        pass
+        if div_match:
 
-            # PBR
-            if 'PBR' in text:
-
-                values = table.values.flatten()
-
-                for v in values:
-
-                    s = str(v)
-
-                    if 'PBR' in s:
-                        continue
-
-                    try:
-
-                        num = float(
-                            s.replace(',', '')
-                        )
-
-                        if 0 < num < 30:
-                            pbr = num
-                            break
-
-                    except:
-                        pass
-
-            # 배당률
-            if '배당수익률' in text:
-
-                values = table.values.flatten()
-
-                for v in values:
-
-                    s = str(v).replace('%', '')
-
-                    try:
-
-                        num = float(
-                            s.replace(',', '')
-                        )
-
-                        if 0 < num < 20:
-                            div = num
-                            break
-
-                    except:
-                        pass
+            div = float(
+                div_match.group(1)
+            )
 
         return per, pbr, div
 
