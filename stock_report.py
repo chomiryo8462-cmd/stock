@@ -157,6 +157,29 @@ def get_stock_list():
 
 
 # =========================================================
+# RSI 계산
+# =========================================================
+
+def calculate_rsi(close_series, period=14):
+
+    delta = close_series.diff()
+
+    gain = delta.clip(lower=0)
+
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss
+
+    rsi = 100 - (100 / (1 + rs))
+
+    return rsi.iloc[-1]
+
+
+# =========================================================
 # 개별 종목 분석
 # =========================================================
 
@@ -166,7 +189,7 @@ def analyze_stock(code, name):
 
         end = datetime.now()
 
-        start = end - timedelta(days=30)
+        start = end - timedelta(days=60)
 
         df = fdr.DataReader(
             code,
@@ -174,7 +197,7 @@ def analyze_stock(code, name):
             end.strftime("%Y-%m-%d")
         )
 
-        if len(df) < 2:
+        if len(df) < 20:
             return None
 
         latest = df.iloc[-1]
@@ -191,10 +214,41 @@ def analyze_stock(code, name):
 
         trading_value = close * volume
 
+        # =================================================
+        # 거래량 배수
+        # =================================================
+
+        avg_volume = df['Volume'].iloc[:-1].mean()
+
+        if avg_volume > 0:
+            volume_ratio = volume / avg_volume
+        else:
+            volume_ratio = 0
+
+        # =================================================
+        # 20일 이동평균 돌파
+        # =================================================
+
+        ma20 = df['Close'].rolling(20).mean().iloc[-1]
+
+        ma20_break = close > ma20
+
+        # =================================================
+        # RSI
+        # =================================================
+
+        rsi_value = calculate_rsi(df['Close'])
+
+        # =================================================
         # 뉴스 개수
+        # =================================================
+
         news_count = get_news_count(name)
 
+        # =================================================
         # 펀더멘털
+        # =================================================
+
         per, pbr, div = get_fundamental(code)
 
         return {
@@ -207,7 +261,13 @@ def analyze_stock(code, name):
 
             '거래량': int(volume),
 
+            '거래량배수': round(volume_ratio, 2),
+
             '거래대금': int(trading_value),
+
+            '20일돌파': ma20_break,
+
+            'RSI': round(rsi_value, 2),
 
             'PER': round(per, 2),
 
@@ -233,7 +293,6 @@ def collect_data():
 
     stocks = get_stock_list()
 
-    # 속도 제한
     stocks = stocks.head(VOLUME_TOP)
 
     results = []
@@ -280,13 +339,17 @@ def collect_data():
 
     df['종합점수'] = (
 
-        df['등락률'].rank(pct=True) * 30 +
+        df['등락률'].rank(pct=True) * 25 +
 
-        df['거래량'].rank(pct=True) * 25 +
+        df['거래량'].rank(pct=True) * 15 +
 
-        df['거래대금'].rank(pct=True) * 20 +
+        df['거래량배수'].rank(pct=True) * 20 +
 
-        df['뉴스수'].rank(pct=True) * 15 +
+        df['거래대금'].rank(pct=True) * 15 +
+
+        df['뉴스수'].rank(pct=True) * 10 +
+
+        df['RSI'].rank(pct=True) * 5 +
 
         (1 / safe_per).rank(pct=True) * 5 +
 
@@ -369,7 +432,7 @@ def send_email(filename):
 
         part.add_header(
             "Content-Disposition",
-            f'attachment; filename="{os.path.basename(filename)}"'
+            f'attachment; filename=\"{os.path.basename(filename)}\"'
         )
 
         msg.attach(part)
