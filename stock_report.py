@@ -1,6 +1,5 @@
 import pandas as pd
 import FinanceDataReader as fdr
-from pykrx import stock
 from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
@@ -12,74 +11,12 @@ import traceback
 import os
 import time
 
-# =========================================================
-# 설정
-# =========================================================
-
 TOP_N = 100
-VOLUME_TOP = 300
-
-THEMES = {
-
-    'AI/반도체': [
-        '삼성전자',
-        'SK하이닉스',
-        '한미반도체',
-        '리노공업',
-        '이오테크닉스'
-    ],
-
-    '전력/에너지': [
-        '제룡전기',
-        '효성중공업',
-        '현대일렉트릭',
-        '두산에너빌리티'
-    ],
-
-    '바이오': [
-        '알테오젠',
-        '리가켐바이오',
-        '디앤디파마텍',
-        '삼천당제약'
-    ],
-
-    '로봇': [
-        '레인보우로보틱스',
-        '두산로보틱스'
-    ]
-}
+VOLUME_TOP = 200
 
 
 # =========================================================
-# 최근 영업일
-# =========================================================
-
-def get_last_business_day():
-
-    today = datetime.now()
-
-    while today.weekday() >= 5:
-        today -= timedelta(days=1)
-
-    return today.strftime("%Y%m%d")
-
-
-# =========================================================
-# 테마 분류
-# =========================================================
-
-def classify_theme(name):
-
-    for theme, keywords in THEMES.items():
-
-        if any(k in name for k in keywords):
-            return theme
-
-    return '기타'
-
-
-# =========================================================
-# 뉴스 개수 수집
+# 뉴스 개수
 # =========================================================
 
 def get_news_count(keyword):
@@ -101,168 +38,127 @@ def get_news_count(keyword):
             timeout=10
         )
 
-        soup = BeautifulSoup(r.text, 'lxml')
+        soup = BeautifulSoup(
+            r.text,
+            'lxml'
+        )
 
-        news_items = soup.select(".news_area")
+        news_items = soup.select(
+            ".news_area"
+        )
 
         return len(news_items)
 
-    except Exception as e:
-
-        print(f"뉴스 수집 실패 {keyword}: {e}")
-
+    except:
         return 0
 
 
 # =========================================================
-# 거래량 상위 종목 추출
+# 종목 리스트
 # =========================================================
 
-def get_volume_top_stocks(target_date):
+def get_stock_list():
 
-    df = stock.get_market_ohlcv_by_ticker(
-        target_date,
-        market="ALL"
-    )
+    kospi = fdr.StockListing('KOSPI')
+    kosdaq = fdr.StockListing('KOSDAQ')
 
-    if df.empty:
-        raise ValueError("OHLCV 데이터 없음")
+    df = pd.concat([kospi, kosdaq])
 
-    df = df.sort_values(
-        by='거래량',
-        ascending=False
-    )
-
-    df = df.head(VOLUME_TOP)
-
-    return df
+    return df[['Code', 'Name']]
 
 
 # =========================================================
-# 종목 상세 분석
+# 개별 종목 분석
 # =========================================================
 
-def analyze_stock(
-    ticker,
-    target_date,
-    price_df,
-    fund_df
-):
+def analyze_stock(code, name):
 
     try:
 
-        name = stock.get_market_ticker_name(
-            ticker
+        end = datetime.now()
+
+        start = end - timedelta(days=30)
+
+        df = fdr.DataReader(
+            code,
+            start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d")
         )
 
-        row = price_df.loc[ticker]
+        if len(df) < 2:
+            return None
 
-        close = row['종가']
-        volume = row['거래량']
-        change = row['등락률']
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+
+        close = latest['Close']
+
+        volume = latest['Volume']
+
+        change = (
+            (close - prev['Close'])
+            / prev['Close']
+        ) * 100
 
         trading_value = close * volume
 
-        # 펀더멘털
-        if ticker in fund_df.index:
-
-            fund = fund_df.loc[ticker]
-
-            per = fund.get('PER', 0)
-            pbr = fund.get('PBR', 0)
-
-            # DIV 또는 DVD_YLD 둘 다 대응
-            div = (
-                fund.get('DIV', 0)
-                if 'DIV' in fund.index
-                else fund.get('DVD_YLD', 0)
-            )
-
-        else:
-
-            per = 0
-            pbr = 0
-            div = 0
-
-        # 뉴스
+        # 뉴스 개수
         news_count = get_news_count(name)
-
-        # 테마
-        theme = classify_theme(name)
 
         return {
 
             '종목명': name,
 
-            '현재가': round(float(close), 2),
+            '현재가': round(close, 2),
 
-            '등락률': round(float(change), 2),
+            '등락률': round(change, 2),
 
             '거래량': int(volume),
 
             '거래대금': int(trading_value),
 
-            'PER': round(float(per), 2),
+            # FDR에는 펀더멘털 없음
+            'PER': 0,
 
-            'PBR': round(float(pbr), 2),
+            'PBR': 0,
 
-            '배당률': round(float(div), 2),
+            '배당률': 0,
 
-            '뉴스수': int(news_count),
-
-            '주도테마': theme
+            '뉴스수': news_count
         }
 
     except Exception as e:
 
-        print(f"에러 발생 {ticker}: {e}")
+        print(f"에러 {name}: {e}")
 
         return None
 
 
 # =========================================================
-# 전체 데이터 수집
+# 데이터 수집
 # =========================================================
 
 def collect_data():
 
-    target_date = get_last_business_day()
+    stocks = get_stock_list()
 
-    print(f"기준일: {target_date}")
-
-    # 가격 데이터 한 번만 조회
-    price_df = stock.get_market_ohlcv_by_ticker(
-        target_date,
-        market="ALL"
-    )
-
-    # 펀더멘털 데이터 한 번만 조회
-    fund_df = stock.get_market_fundamental_by_ticker(
-        target_date,
-        market="ALL"
-    )
-
-    # 거래량 상위
-    volume_df = price_df.sort_values(
-        by='거래량',
-        ascending=False
-    ).head(VOLUME_TOP)
-
-    tickers = volume_df.index.tolist()
+    # 속도 제한
+    stocks = stocks.head(VOLUME_TOP)
 
     results = []
 
-    total = len(tickers)
+    total = len(stocks)
 
-    for idx, ticker in enumerate(tickers):
+    for idx, row in stocks.iterrows():
 
-        print(f"[{idx+1}/{total}] {ticker}")
+        code = row['Code']
+        name = row['Name']
+
+        print(f"[{idx+1}/{total}] {name}")
 
         data = analyze_stock(
-            ticker,
-            target_date,
-            price_df,
-            fund_df
+            code,
+            name
         )
 
         if data:
@@ -273,37 +169,18 @@ def collect_data():
     df = pd.DataFrame(results)
 
     if df.empty:
-        raise ValueError("결과 데이터 없음")
+        raise ValueError("수집 데이터 없음")
 
-    # =====================================================
-    # 종합점수 계산
-    # =====================================================
-
-    safe_per = (
-        df['PER']
-        .replace(0, 9999)
-        .fillna(9999)
-    )
-
-    safe_pbr = (
-        df['PBR']
-        .replace(0, 9999)
-        .fillna(9999)
-    )
-
+    # 종합점수
     df['종합점수'] = (
 
-        df['등락률'].rank(pct=True) * 25 +
+        df['등락률'].rank(pct=True) * 30 +
 
-        df['거래량'].rank(pct=True) * 20 +
+        df['거래량'].rank(pct=True) * 25 +
 
-        df['거래대금'].rank(pct=True) * 20 +
+        df['거래대금'].rank(pct=True) * 25 +
 
-        df['뉴스수'].rank(pct=True) * 20 +
-
-        (1 / safe_per).rank(pct=True) * 10 +
-
-        (1 / safe_pbr).rank(pct=True) * 5
+        df['뉴스수'].rank(pct=True) * 20
 
     ).round(2)
 
@@ -335,14 +212,6 @@ def save_excel(df):
         engine='openpyxl'
     )
 
-    print(f"엑셀 저장 완료: {filename}")
-
-    if not os.path.exists(filename):
-
-        raise FileNotFoundError(
-            f"파일 생성 실패: {filename}"
-        )
-
     return filename
 
 
@@ -360,24 +229,14 @@ def send_email(filename):
         'EMAIL_PASSWORD'
     )
 
-    if not email_user:
-        raise ValueError("EMAIL_USER 없음")
-
-    if not email_pw:
-        raise ValueError("EMAIL_PASSWORD 없음")
-
     msg = MIMEMultipart()
 
     msg['Subject'] = (
-        "📊 오늘의 한국 주식 리포트"
+        "📊 한국 주식 리포트"
     )
 
     msg['To'] = email_user
     msg['From'] = email_user
-
-    # =====================================================
-    # 첨부파일 추가
-    # =====================================================
 
     with open(filename, "rb") as f:
 
@@ -397,8 +256,6 @@ def send_email(filename):
 
         msg.attach(part)
 
-    print("이메일 전송 시작")
-
     with smtplib.SMTP_SSL(
         'smtp.gmail.com',
         465
@@ -415,7 +272,7 @@ def send_email(filename):
             msg.as_string()
         )
 
-    print("이메일 전송 완료")
+    print("메일 전송 완료")
 
 
 # =========================================================
@@ -430,17 +287,15 @@ def main():
 
         df = collect_data()
 
-        print(df.head())
-
         filename = save_excel(df)
 
         send_email(filename)
 
-        print("전체 작업 완료")
+        print("전체 완료")
 
     except Exception as e:
 
-        print("최종 에러 발생")
+        print("최종 에러")
 
         print(str(e))
 
