@@ -103,13 +103,14 @@ def get_news_count(keyword):
 
         soup = BeautifulSoup(r.text, 'lxml')
 
-        news_items = soup.select(
-            ".news_area"
-        )
+        news_items = soup.select(".news_area")
 
         return len(news_items)
 
-    except:
+    except Exception as e:
+
+        print(f"뉴스 수집 실패 {keyword}: {e}")
+
         return 0
 
 
@@ -141,18 +142,17 @@ def get_volume_top_stocks(target_date):
 # 종목 상세 분석
 # =========================================================
 
-def analyze_stock(ticker, target_date):
+def analyze_stock(
+    ticker,
+    target_date,
+    price_df,
+    fund_df
+):
 
     try:
 
         name = stock.get_market_ticker_name(
             ticker
-        )
-
-        # 가격 데이터
-        price_df = stock.get_market_ohlcv_by_ticker(
-            target_date,
-            market="ALL"
         )
 
         row = price_df.loc[ticker]
@@ -164,18 +164,19 @@ def analyze_stock(ticker, target_date):
         trading_value = close * volume
 
         # 펀더멘털
-        fund_df = stock.get_market_fundamental_by_ticker(
-            target_date,
-            market="ALL"
-        )
-
         if ticker in fund_df.index:
 
             fund = fund_df.loc[ticker]
 
             per = fund.get('PER', 0)
             pbr = fund.get('PBR', 0)
-            div = fund.get('DIV', 0)
+
+            # DIV 또는 DVD_YLD 둘 다 대응
+            div = (
+                fund.get('DIV', 0)
+                if 'DIV' in fund.index
+                else fund.get('DVD_YLD', 0)
+            )
 
         else:
 
@@ -193,21 +194,21 @@ def analyze_stock(ticker, target_date):
 
             '종목명': name,
 
-            '현재가': round(close, 2),
+            '현재가': round(float(close), 2),
 
-            '등락률': round(change, 2),
+            '등락률': round(float(change), 2),
 
             '거래량': int(volume),
 
             '거래대금': int(trading_value),
 
-            'PER': round(per, 2),
+            'PER': round(float(per), 2),
 
-            'PBR': round(pbr, 2),
+            'PBR': round(float(pbr), 2),
 
-            '배당률': round(div, 2),
+            '배당률': round(float(div), 2),
 
-            '뉴스수': news_count,
+            '뉴스수': int(news_count),
 
             '주도테마': theme
         }
@@ -220,7 +221,7 @@ def analyze_stock(ticker, target_date):
 
 
 # =========================================================
-# 전체 분석
+# 전체 데이터 수집
 # =========================================================
 
 def collect_data():
@@ -229,13 +230,27 @@ def collect_data():
 
     print(f"기준일: {target_date}")
 
-    volume_df = get_volume_top_stocks(
-        target_date
+    # 가격 데이터 한 번만 조회
+    price_df = stock.get_market_ohlcv_by_ticker(
+        target_date,
+        market="ALL"
     )
 
-    results = []
+    # 펀더멘털 데이터 한 번만 조회
+    fund_df = stock.get_market_fundamental_by_ticker(
+        target_date,
+        market="ALL"
+    )
+
+    # 거래량 상위
+    volume_df = price_df.sort_values(
+        by='거래량',
+        ascending=False
+    ).head(VOLUME_TOP)
 
     tickers = volume_df.index.tolist()
+
+    results = []
 
     total = len(tickers)
 
@@ -245,22 +260,36 @@ def collect_data():
 
         data = analyze_stock(
             ticker,
-            target_date
+            target_date,
+            price_df,
+            fund_df
         )
 
         if data:
             results.append(data)
 
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     df = pd.DataFrame(results)
 
     if df.empty:
-        raise ValueError("결과 없음")
+        raise ValueError("결과 데이터 없음")
 
     # =====================================================
     # 종합점수 계산
     # =====================================================
+
+    safe_per = (
+        df['PER']
+        .replace(0, 9999)
+        .fillna(9999)
+    )
+
+    safe_pbr = (
+        df['PBR']
+        .replace(0, 9999)
+        .fillna(9999)
+    )
 
     df['종합점수'] = (
 
@@ -272,9 +301,9 @@ def collect_data():
 
         df['뉴스수'].rank(pct=True) * 20 +
 
-        (1 / (df['PER'].replace(0, 9999))).rank(pct=True) * 10 +
+        (1 / safe_per).rank(pct=True) * 10 +
 
-        (1 / (df['PBR'].replace(0, 9999))).rank(pct=True) * 5
+        (1 / safe_pbr).rank(pct=True) * 5
 
     ).round(2)
 
@@ -297,15 +326,22 @@ def save_excel(df):
     )
 
     filename = (
-        f"Stock_Report_{now}.xlsx"
+        f"/tmp/Stock_Report_{now}.xlsx"
     )
 
     df.to_excel(
         filename,
-        index=False
+        index=False,
+        engine='openpyxl'
     )
 
     print(f"엑셀 저장 완료: {filename}")
+
+    if not os.path.exists(filename):
+
+        raise FileNotFoundError(
+            f"파일 생성 실패: {filename}"
+        )
 
     return filename
 
@@ -325,14 +361,10 @@ def send_email(filename):
     )
 
     if not email_user:
-        raise ValueError(
-            "EMAIL_USER 없음"
-        )
+        raise ValueError("EMAIL_USER 없음")
 
     if not email_pw:
-        raise ValueError(
-            "EMAIL_PASSWORD 없음"
-        )
+        raise ValueError("EMAIL_PASSWORD 없음")
 
     msg = MIMEMultipart()
 
@@ -342,6 +374,10 @@ def send_email(filename):
 
     msg['To'] = email_user
     msg['From'] = email_user
+
+    # =====================================================
+    # 첨부파일 추가
+    # =====================================================
 
     with open(filename, "rb") as f:
 
@@ -356,7 +392,7 @@ def send_email(filename):
 
         part.add_header(
             "Content-Disposition",
-            f"attachment; filename={filename}"
+            f'attachment; filename="{os.path.basename(filename)}"'
         )
 
         msg.attach(part)
@@ -404,7 +440,7 @@ def main():
 
     except Exception as e:
 
-        print("최종 에러")
+        print("최종 에러 발생")
 
         print(str(e))
 
@@ -414,4 +450,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main()
