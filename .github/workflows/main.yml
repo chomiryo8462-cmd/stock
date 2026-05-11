@@ -1,8 +1,8 @@
 name: AutoStock
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 수동 실행
   schedule:
-    - cron: '30 23 * * 1-5'
+    - cron: '30 23 * * 1-5' # 평일 오전 8:30
 jobs:
   run:
     runs-on: ubuntu-latest
