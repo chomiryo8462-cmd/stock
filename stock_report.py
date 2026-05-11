@@ -9,61 +9,77 @@ import os
 
 def send_email():
     try:
-        # 1. 데이터 수집 (KRX 전체)
-        df_base = fdr.StockListing('KRX')
+        print("🚀 데이터 수집 시작...")
+        # 1. KRX 전체 종목 리스트 확보
+        df = fdr.StockListing('KRX')
         
-        # 2. 컬럼 매칭 및 숫자 변환 (PER, PBR 0값 방지 시도)
-        col_map = {c.lower(): c for c in df_base.columns}
-        def find_col(possible_names):
-            for name in possible_names:
-                if name.lower() in col_map: return col_map[name.lower()]
-            return None
+        # 2. 필수 컬럼 확보 및 이름 고정 (에러 방지용)
+        # FinanceDataReader의 버전에 따라 컬럼명이 다를 수 있어 강제로 매칭합니다.
+        check_cols = {
+            'Name': '종목명', 'Close': '현재가', 'ChgRate': '등락률(%)',
+            'PER': 'PER', 'PBR': 'PBR', 'DividendYield': '배당수익률(%)',
+            'Volume': '거래량', 'Marcap': '시가총액', 'Market': '시장'
+        }
+        
+        final_df = pd.DataFrame()
+        for eng, kor in check_cols.items():
+            if eng in df.columns:
+                final_df[kor] = df[eng]
+            else:
+                # 컬럼이 없으면 0으로 채운 빈 컬럼 생성
+                final_df[kor] = 0
 
-        t_per, t_pbr, t_div = find_col(['per']), find_col(['pbr']), find_col(['dividendyield', '배당수익률'])
-        t_marcap, t_vol, t_chg = find_col(['marcap', '시가총액']), find_col(['volume', '거래량']), find_col(['chgrate', '등락률'])
+        # 3. 데이터 숫자 변환 (전처리)
+        num_cols = ['현재가', '등락률(%)', 'PER', 'PBR', '배당수익률(%)', '거래량', '시가총액']
+        for col in num_cols:
+            final_df[col] = pd.to_numeric(final_df[col], errors='coerce').fillna(0)
 
-        for c in [t_marcap, t_vol, t_chg, t_per, t_pbr, t_div, 'Close']:
-            if c: df_base[c] = pd.to_numeric(df_base[c], errors='coerce').fillna(0)
-
-        # 3. 테마 분류 및 종합점수 계산
+        # 4. 주도 테마 분류
         def classify_theme(name):
-            themes = {'AI/반도체': ['삼성전자', 'SK하이닉스', '한미반도체'], '전력/에너지': ['제룡전기', '두산에너빌리티'], '광통신': ['대한광통신'], '엔터/금융': ['YG', 'KB금융']}
-            for theme, keys in themes.items():
-                if any(k in name for k in keys): return theme
+            if any(k in name for k in ['삼성전자', 'SK하이닉스', '한미반도체', 'HBM']): return 'AI/반도체'
+            if any(k in name for k in ['제룡전기', '효성중공업', '현대일렉트릭', '두산에너빌리티']): return '전력/에너지'
+            if any(k in name for k in ['대한광통신', '오이솔루션']): return '광통신/5G'
+            if any(k in name for k in ['YG', '하이브', '금융', '지주']): return '엔터/금융'
             return '기타'
         
-        df_base['주도테마'] = df_base['Name'].apply(classify_theme)
-        df_base['종합점수'] = (df_base[t_marcap].rank(pct=True) * 50 + df_base[t_vol].rank(pct=True) * 50).round(2)
-        df_base['시가총액(억)'] = (df_base[t_marcap] / 100000000).astype(int)
+        final_df['주도테마'] = final_df['종목명'].apply(classify_theme)
 
-        # 4. 리포트 정리 (상위 100개)
-        final_headers = ['종합점수', '주도테마', '종목명', '현재가', '등락률(%)', 'PER', 'PBR', '배당수익률(%)', '거래량', '시가총액(억)', '시장']
-        df_final = df_base.rename(columns={'Name':'종목명', 'Close':'현재가', t_chg:'등락률(%)', t_per:'PER', t_pbr:'PBR', t_div:'배당수익률(%)', t_vol:'거래량', 'Market':'시장'})[final_headers]
-        df_final = df_final.sort_values(by='종합점수', ascending=False).head(100)
+        # 5. 종합점수 계산 (시총 50% + 거래량 50%)
+        final_df['종합점수'] = (final_df['시가총액'].rank(pct=True) * 50 + final_df['거래량'].rank(pct=True) * 50).round(2)
+        final_df['시가총액(억)'] = (final_df['시가총액'] / 100000000).astype(int)
 
-        # 5. 엑셀 저장 및 메일 발송
+        # 6. 상위 100개 추출 및 정리
+        cols_to_show = ['종합점수', '주도테마', '종목명', '현재가', '등락률(%)', 'PER', 'PBR', '배당수익률(%)', '거래량', '시가총액(억)', '시장']
+        result_df = final_df[cols_to_show].sort_values(by='종합점수', ascending=False).head(100)
+
+        # 7. 엑셀 저장 및 메일 발송
         today = datetime.now().strftime('%Y-%m-%d')
-        filename = f"Stock_Report_{today}.xlsx"
-        df_final.to_excel(filename, index=False, engine='openpyxl')
+        filename = f"Stock_Master_Report_{today}.xlsx"
+        result_df.to_excel(filename, index=False, engine='openpyxl')
 
         email_user = "chomiryo8462@gmail.com"
         email_password = os.environ.get('EMAIL_PASSWORD')
         
         msg = MIMEMultipart()
-        msg['Subject'] = f"📊 [자동발송] 주식 마스터 리포트 ({today})"
-        msg.attach(MIMEBase("application", "octet-stream")) # 파일 첨부 로직 생략(위 코드와 동일)
-        # ... (생략된 메일 발송 코드 부분은 위와 동일하게 적용됨) ...
-        
-        with open(filename, "rb") as f:
+        msg['Subject'] = f"📊 [마스터리포트] 가치지표 및 테마 분석 ({today})"
+        msg['To'] = email_user
+        msg['From'] = email_user
+
+        with open(filename, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
-            part.set_payload(f.read()); encoders.encode_base64(part)
+            part.set_payload(attachment.read())
+            encoders.encode_base64(part)
             part.add_header("Content-Disposition", f"attachment; filename={filename}")
             msg.attach(part)
 
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(email_user, email_password)
             server.sendmail(email_user, email_user, msg.as_string())
-        print("전송 완료!")
-    except Exception as e: print(f"오류: {e}")
+        
+        print("✅ 전송 완료!")
 
-if __name__ == "__main__": send_email()
+    except Exception as e:
+        print(f"❌ 오류: {str(e)}")
+
+if __name__ == "__main__":
+    send_email()
