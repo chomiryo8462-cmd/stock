@@ -24,6 +24,48 @@ HEADERS = {
 }
 
 # =========================================================
+# 테마 설정
+# =========================================================
+
+THEMES = {
+
+    'AI반도체': [
+        '삼성전자',
+        'SK하이닉스',
+        '한미반도체',
+        '리노공업'
+    ],
+
+    '전력': [
+        '제룡전기',
+        '효성중공업',
+        '현대일렉트릭'
+    ],
+
+    '원전': [
+        '두산에너빌리티',
+        '한전기술'
+    ],
+
+    '바이오': [
+        '디앤디파마텍',
+        '알테오젠',
+        'HLB'
+    ],
+
+    '로봇': [
+        '레인보우로보틱스',
+        '두산로보틱스'
+    ],
+
+    'ESS': [
+        'SK이터닉스',
+        '피엔티',
+        '씨아이에스'
+    ]
+}
+
+# =========================================================
 # 뉴스 개수 수집
 # =========================================================
 
@@ -57,9 +99,8 @@ def get_news_count(keyword):
 
         return 0
 
-
 # =========================================================
-# 네이버 금융 펀더멘털 수집
+# 펀더멘털 수집
 # =========================================================
 
 def get_fundamental(code):
@@ -82,10 +123,6 @@ def get_fundamental(code):
         pbr = 0
         div = 0
 
-        # =================================================
-        # PER
-        # =================================================
-
         per_match = re.search(
             r"PER\(배\).*?([0-9]+\.[0-9]+)",
             text,
@@ -93,14 +130,7 @@ def get_fundamental(code):
         )
 
         if per_match:
-
-            per = float(
-                per_match.group(1)
-            )
-
-        # =================================================
-        # PBR
-        # =================================================
+            per = float(per_match.group(1))
 
         pbr_match = re.search(
             r"PBR\(배\).*?([0-9]+\.[0-9]+)",
@@ -109,14 +139,7 @@ def get_fundamental(code):
         )
 
         if pbr_match:
-
-            pbr = float(
-                pbr_match.group(1)
-            )
-
-        # =================================================
-        # 배당수익률
-        # =================================================
+            pbr = float(pbr_match.group(1))
 
         div_match = re.search(
             r"배당수익률.*?([0-9]+\.[0-9]+)\%",
@@ -125,10 +148,7 @@ def get_fundamental(code):
         )
 
         if div_match:
-
-            div = float(
-                div_match.group(1)
-            )
+            div = float(div_match.group(1))
 
         return per, pbr, div
 
@@ -137,7 +157,6 @@ def get_fundamental(code):
         print(f"펀더멘털 실패 {code}: {e}")
 
         return 0, 0, 0
-
 
 # =========================================================
 # 종목 리스트
@@ -154,7 +173,6 @@ def get_stock_list():
     ])
 
     return df[['Code', 'Name']]
-
 
 # =========================================================
 # RSI 계산
@@ -178,9 +196,62 @@ def calculate_rsi(close_series, period=14):
 
     return rsi.iloc[-1]
 
+# =========================================================
+# 테마 분류
+# =========================================================
+
+def classify_theme(name):
+
+    for theme, keywords in THEMES.items():
+
+        if any(k in name for k in keywords):
+            return theme
+
+    return '기타'
 
 # =========================================================
-# 개별 종목 분석
+# 수급 강도
+# =========================================================
+
+def calculate_supply_score(change, volume_ratio, news_count):
+
+    score = 0
+
+    if change > 5:
+        score += 1
+
+    if volume_ratio > 3:
+        score += 1
+
+    if news_count > 5:
+        score += 1
+
+    if score >= 3:
+        return '수급강함'
+
+    elif score == 2:
+        return '관심'
+
+    else:
+        return '보통'
+
+# =========================================================
+# 과열 탐지
+# =========================================================
+
+def detect_risk(change, rsi, volume_ratio):
+
+    if (
+        change >= 20 and
+        rsi >= 80 and
+        volume_ratio >= 5
+    ):
+        return '과열주의'
+
+    return ''
+
+# =========================================================
+# 종목 분석
 # =========================================================
 
 def analyze_stock(code, name):
@@ -214,10 +285,7 @@ def analyze_stock(code, name):
 
         trading_value = close * volume
 
-        # =================================================
         # 거래량 배수
-        # =================================================
-
         avg_volume = df['Volume'].iloc[:-1].mean()
 
         if avg_volume > 0:
@@ -225,35 +293,25 @@ def analyze_stock(code, name):
         else:
             volume_ratio = 0
 
-        # =================================================
-        # 20일 이동평균 돌파
-        # =================================================
-
+        # 20일선
         ma20 = df['Close'].rolling(20).mean().iloc[-1]
 
         ma20_break = close > ma20
 
-        # =================================================
         # RSI
-        # =================================================
-
         rsi_value = calculate_rsi(df['Close'])
 
-        # =================================================
-        # 뉴스 개수
-        # =================================================
-
+        # 뉴스
         news_count = get_news_count(name)
 
-        # =================================================
         # 펀더멘털
-        # =================================================
-
         per, pbr, div = get_fundamental(code)
 
         return {
 
             '종목명': name,
+
+            '테마': classify_theme(name),
 
             '현재가': round(close, 2),
 
@@ -275,7 +333,19 @@ def analyze_stock(code, name):
 
             '배당수익률': round(div, 2),
 
-            '뉴스수': int(news_count)
+            '뉴스수': int(news_count),
+
+            '수급': calculate_supply_score(
+                change,
+                volume_ratio,
+                news_count
+            ),
+
+            '리스크': detect_risk(
+                change,
+                rsi_value,
+                volume_ratio
+            )
         }
 
     except Exception as e:
@@ -283,7 +353,6 @@ def analyze_stock(code, name):
         print(f"종목 분석 실패 {name}: {e}")
 
         return None
-
 
 # =========================================================
 # 데이터 수집
@@ -306,10 +375,7 @@ def collect_data():
 
         print(f"[{idx+1}/{total}] {name}")
 
-        data = analyze_stock(
-            code,
-            name
-        )
+        data = analyze_stock(code, name)
 
         if data:
             results.append(data)
@@ -320,10 +386,6 @@ def collect_data():
 
     if df.empty:
         raise ValueError("수집 데이터 없음")
-
-    # =====================================================
-    # 점수 계산
-    # =====================================================
 
     safe_per = (
         df['PER']
@@ -339,9 +401,9 @@ def collect_data():
 
     df['종합점수'] = (
 
-        df['등락률'].rank(pct=True) * 25 +
+        df['등락률'].rank(pct=True) * 20 +
 
-        df['거래량'].rank(pct=True) * 15 +
+        df['거래량'].rank(pct=True) * 10 +
 
         df['거래량배수'].rank(pct=True) * 20 +
 
@@ -351,9 +413,9 @@ def collect_data():
 
         df['RSI'].rank(pct=True) * 5 +
 
-        (1 / safe_per).rank(pct=True) * 5 +
+        (1 / safe_per).rank(pct=True) * 10 +
 
-        (1 / safe_pbr).rank(pct=True) * 5
+        (1 / safe_pbr).rank(pct=True) * 10
 
     ).round(2)
 
@@ -363,7 +425,6 @@ def collect_data():
     )
 
     return df.head(TOP_N)
-
 
 # =========================================================
 # 엑셀 저장
@@ -389,20 +450,14 @@ def save_excel(df):
 
     return filename
 
-
 # =========================================================
 # 이메일 전송
 # =========================================================
 
 def send_email(filename):
 
-    email_user = os.environ.get(
-        'EMAIL_USER'
-    )
-
-    email_pw = os.environ.get(
-        'EMAIL_PASSWORD'
-    )
+    email_user = os.environ.get('EMAIL_USER')
+    email_pw = os.environ.get('EMAIL_PASSWORD')
 
     if not email_user:
         raise ValueError("EMAIL_USER 없음")
@@ -412,10 +467,7 @@ def send_email(filename):
 
     msg = MIMEMultipart()
 
-    msg['Subject'] = (
-        "📊 오늘의 한국 주식 리포트"
-    )
-
+    msg['Subject'] = "📊 오늘의 한국 주식 리포트"
     msg['To'] = email_user
     msg['From'] = email_user
 
@@ -442,10 +494,7 @@ def send_email(filename):
         465
     ) as server:
 
-        server.login(
-            email_user,
-            email_pw
-        )
+        server.login(email_user, email_pw)
 
         server.sendmail(
             email_user,
@@ -454,7 +503,6 @@ def send_email(filename):
         )
 
     print("메일 전송 완료")
-
 
 # =========================================================
 # 메인
@@ -483,7 +531,6 @@ def main():
         print(str(e))
 
         traceback.print_exc()
-
 
 # =========================================================
 
