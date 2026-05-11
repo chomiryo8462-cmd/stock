@@ -11,12 +11,19 @@ import traceback
 import os
 import time
 
-TOP_N = 100
-VOLUME_TOP = 200
+# =========================================================
+# 설정
+# =========================================================
 
+TOP_N = 100
+VOLUME_TOP = 100
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
 # =========================================================
-# 뉴스 개수
+# 뉴스 개수 수집 (Google News RSS)
 # =========================================================
 
 def get_news_count(keyword):
@@ -24,33 +31,139 @@ def get_news_count(keyword):
     try:
 
         url = (
-            f"https://search.naver.com/search.naver?"
-            f"where=news&query={keyword}"
+            "https://news.google.com/rss/search?"
+            f"q={keyword}+when:1d&hl=ko&gl=KR&ceid=KR:ko"
         )
-
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
 
         r = requests.get(
             url,
-            headers=headers,
+            headers=HEADERS,
             timeout=10
         )
 
         soup = BeautifulSoup(
             r.text,
-            'lxml'
+            'xml'
         )
 
-        news_items = soup.select(
-            ".news_area"
-        )
+        items = soup.find_all('item')
 
-        return len(news_items)
+        return len(items)
 
-    except:
+    except Exception as e:
+
+        print(f"뉴스 수집 실패 {keyword}: {e}")
+
         return 0
+
+
+# =========================================================
+# 네이버 금융 펀더멘털 수집
+# =========================================================
+
+def get_fundamental(code):
+
+    try:
+
+        url = (
+            f"https://finance.naver.com/item/main.naver?code={code}"
+        )
+
+        r = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=10
+        )
+
+        tables = pd.read_html(r.text)
+
+        per = 0
+        pbr = 0
+        div = 0
+
+        for table in tables:
+
+            text = table.to_string()
+
+            # PER
+            if 'PER' in text:
+
+                values = table.values.flatten()
+
+                for v in values:
+
+                    s = str(v)
+
+                    if 'PER' in s:
+                        continue
+
+                    try:
+
+                        num = float(
+                            s.replace(',', '')
+                        )
+
+                        if 0 < num < 200:
+                            per = num
+                            break
+
+                    except:
+                        pass
+
+            # PBR
+            if 'PBR' in text:
+
+                values = table.values.flatten()
+
+                for v in values:
+
+                    s = str(v)
+
+                    if 'PBR' in s:
+                        continue
+
+                    try:
+
+                        num = float(
+                            s.replace(',', '')
+                        )
+
+                        if 0 < num < 30:
+                            pbr = num
+                            break
+
+                    except:
+                        pass
+
+            # 배당률
+            if '배당수익률' in text:
+
+                values = table.values.flatten()
+
+                for v in values:
+
+                    s = str(v).replace('%', '')
+
+                    try:
+
+                        num = float(
+                            s.replace(',', '')
+                        )
+
+                        if 0 < num < 20:
+                            div = num
+                            break
+
+                    except:
+                        pass
+
+        return per, pbr, div
+
+    except Exception as e:
+
+        print(f"펀더멘털 실패 {code}: {e}")
+
+        return 0, 0, 0
 
 
 # =========================================================
@@ -62,7 +175,10 @@ def get_stock_list():
     kospi = fdr.StockListing('KOSPI')
     kosdaq = fdr.StockListing('KOSDAQ')
 
-    df = pd.concat([kospi, kosdaq])
+    df = pd.concat([
+        kospi,
+        kosdaq
+    ])
 
     return df[['Code', 'Name']]
 
@@ -105,6 +221,9 @@ def analyze_stock(code, name):
         # 뉴스 개수
         news_count = get_news_count(name)
 
+        # 펀더멘털
+        per, pbr, div = get_fundamental(code)
+
         return {
 
             '종목명': name,
@@ -117,19 +236,18 @@ def analyze_stock(code, name):
 
             '거래대금': int(trading_value),
 
-            # FDR에는 펀더멘털 없음
-            'PER': 0,
+            'PER': round(per, 2),
 
-            'PBR': 0,
+            'PBR': round(pbr, 2),
 
-            '배당률': 0,
+            '배당률': round(div, 2),
 
-            '뉴스수': news_count
+            '뉴스수': int(news_count)
         }
 
     except Exception as e:
 
-        print(f"에러 {name}: {e}")
+        print(f"종목 분석 실패 {name}: {e}")
 
         return None
 
@@ -164,23 +282,42 @@ def collect_data():
         if data:
             results.append(data)
 
-        time.sleep(0.1)
+        time.sleep(0.2)
 
     df = pd.DataFrame(results)
 
     if df.empty:
         raise ValueError("수집 데이터 없음")
 
-    # 종합점수
+    # =====================================================
+    # 점수 계산
+    # =====================================================
+
+    safe_per = (
+        df['PER']
+        .replace(0, 9999)
+        .fillna(9999)
+    )
+
+    safe_pbr = (
+        df['PBR']
+        .replace(0, 9999)
+        .fillna(9999)
+    )
+
     df['종합점수'] = (
 
         df['등락률'].rank(pct=True) * 30 +
 
         df['거래량'].rank(pct=True) * 25 +
 
-        df['거래대금'].rank(pct=True) * 25 +
+        df['거래대금'].rank(pct=True) * 20 +
 
-        df['뉴스수'].rank(pct=True) * 20
+        df['뉴스수'].rank(pct=True) * 15 +
+
+        (1 / safe_per).rank(pct=True) * 5 +
+
+        (1 / safe_pbr).rank(pct=True) * 5
 
     ).round(2)
 
@@ -212,6 +349,8 @@ def save_excel(df):
         engine='openpyxl'
     )
 
+    print(f"엑셀 저장 완료: {filename}")
+
     return filename
 
 
@@ -229,10 +368,16 @@ def send_email(filename):
         'EMAIL_PASSWORD'
     )
 
+    if not email_user:
+        raise ValueError("EMAIL_USER 없음")
+
+    if not email_pw:
+        raise ValueError("EMAIL_PASSWORD 없음")
+
     msg = MIMEMultipart()
 
     msg['Subject'] = (
-        "📊 한국 주식 리포트"
+        "📊 오늘의 한국 주식 리포트"
     )
 
     msg['To'] = email_user
@@ -287,6 +432,8 @@ def main():
 
         df = collect_data()
 
+        print(df.head())
+
         filename = save_excel(df)
 
         send_email(filename)
@@ -295,7 +442,7 @@ def main():
 
     except Exception as e:
 
-        print("최종 에러")
+        print("최종 에러 발생")
 
         print(str(e))
 
