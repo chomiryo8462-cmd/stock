@@ -1,1 +1,7 @@
 
+finance-datareader
+pandas
+openpyxl
+beautifulsoup4
+lxml
+requests
