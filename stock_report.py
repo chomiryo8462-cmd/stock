@@ -24,7 +24,7 @@ HEADERS = {
 }
 
 # =========================================================
-# 뉴스 개수 수집 (Google News RSS)
+# 뉴스 개수 수집
 # =========================================================
 
 def get_news_count(keyword):
@@ -87,8 +87,9 @@ def get_fundamental(code):
         # =================================================
 
         per_match = re.search(
-            r"PER[^0-9]*([0-9]+\.[0-9]+)",
-            text
+            r"PER\(배\).*?([0-9]+\.[0-9]+)",
+            text,
+            re.S
         )
 
         if per_match:
@@ -102,8 +103,9 @@ def get_fundamental(code):
         # =================================================
 
         pbr_match = re.search(
-            r"PBR[^0-9]*([0-9]+\.[0-9]+)",
-            text
+            r"PBR\(배\).*?([0-9]+\.[0-9]+)",
+            text,
+            re.S
         )
 
         if pbr_match:
@@ -117,8 +119,9 @@ def get_fundamental(code):
         # =================================================
 
         div_match = re.search(
-            r"배당수익률[^0-9]*([0-9]+\.[0-9]+)",
-            text
+            r"배당수익률.*?([0-9]+\.[0-9]+)\%",
+            text,
+            re.S
         )
 
         if div_match:
@@ -210,7 +213,7 @@ def analyze_stock(code, name):
 
             'PBR': round(pbr, 2),
 
-            '배당률': round(div, 2),
+            '배당수익률': round(div, 2),
 
             '뉴스수': int(news_count)
         }
