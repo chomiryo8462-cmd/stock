@@ -6,7 +6,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: '30 7 * * 1-5'
+    - cron: '10 13 * * *'
 
 jobs:
   run-stock-report:
