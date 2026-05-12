@@ -1,10 +1,9 @@
-name: Stock Report Test
+name: Stock Report
 
 on:
   workflow_dispatch:
   schedule:
-    # 한국시간 22:35 테스트 (UTC 13:35)
-    - cron: '35 13 * * *'
+    - cron: '0 7 * * 1-5'
 
 jobs:
   run-stock-report:
