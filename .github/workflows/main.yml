@@ -1,56 +1,36 @@
 name: Stock Report
 
 on:
-
   workflow_dispatch:
-
+  push:
+    branches:
+      - main
   schedule:
-    # 한국시간 오후 4시 30분
-    # GitHub Actions는 UTC 기준이라 07:30 UTC = 16:30 KST
+    # 한국시간 오후 4시 30분 (UTC 07:30)
     - cron: '30 7 * * 1-5'
 
 jobs:
-
   run-stock-report:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      # =====================================================
-      # 저장소 다운로드
-      # =====================================================
-
+      # 저장소 가져오기
       - name: 체크아웃
         uses: actions/checkout@v4
 
-      # =====================================================
       # Python 설치
-      # =====================================================
-
       - name: Python 설치
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      # =====================================================
-      # 라이브러리 설치
-      # =====================================================
-
+      # 패키지 설치
       - name: 패키지 설치
         run: |
           python -m pip install --upgrade pip
-          pip install pandas
-          pip install finance-datareader
-          pip install openpyxl
-          pip install beautifulsoup4
-          pip install lxml
-          pip install requests
+          pip install pandas finance-datareader openpyxl beautifulsoup4 lxml requests
 
-      # =====================================================
       # 주식 리포트 실행
-      # =====================================================
-
       - name: 주식 리포트 실행
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
